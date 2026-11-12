@@ -24,6 +24,7 @@ from .emociones import EMOCIONES, NOMBRES, normalizar
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 ARCHIVO_USO = Path(__file__).resolve().parent.parent / "datos" / "uso_gemini.json"
+ARCHIVO_MEMORIA = Path(__file__).resolve().parent.parent / "datos" / "memoria_gemini.json"
 LIMITE_DIARIO_FLASH = 20   # pedidos por día y por modelo en la capa gratuita (informado por la API)
 
 
@@ -39,9 +40,10 @@ def _registrar_pedido(modelo: str, estado: int) -> None:
         if uso.get("dia") != _dia_de_cuota():
             uso = {"dia": _dia_de_cuota(), "modelos": {}}
         m = uso["modelos"].setdefault(modelo, {"pedidos": 0, "agotado": False})
-        m["pedidos"] += 1
         if estado == 429:
             m["agotado"] = True
+        else:
+            m["pedidos"] += 1
         ARCHIVO_USO.parent.mkdir(exist_ok=True)
         ARCHIVO_USO.write_text(json.dumps(uso, indent=1), encoding="utf-8")
     except Exception:
@@ -257,10 +259,31 @@ class CoachLLM:
         self._ultimo: dict[str, str] = {}    # último modelo que anduvo para cada uso
         self._i_respaldo = 0
         self.ultimo_error: str | None = None
+        self._recordar()
         if self.clave:
             # En segundo plano: el dashboard abre al instante aunque algún modelo esté saturado
             self.estado = "conectando"
             threading.Thread(target=self._elegir_modelo, daemon=True).start()
+
+    # ---------------------------------------------------------------- memoria entre arranques
+    def _recordar(self) -> None:
+        """Al arrancar retoma el modelo que respondió bien la última vez (si fue hace poco), para
+        que el primer turno no pierda segundos probando modelos saturados."""
+        try:
+            m = json.loads(ARCHIVO_MEMORIA.read_text(encoding="utf-8"))
+            self._sin_pensar = {k: bool(v) for k, v in m.get("sin_pensar", {}).items()}
+            if time.time() - float(m.get("t", 0)) < 3 * 3600:
+                self._ultimo = dict(m.get("ultimo", {}))
+        except Exception:
+            pass
+
+    def _anotar(self) -> None:
+        try:
+            ARCHIVO_MEMORIA.parent.mkdir(exist_ok=True)
+            ARCHIVO_MEMORIA.write_text(json.dumps({"t": time.time(), "ultimo": self._ultimo,
+                                                   "sin_pensar": self._sin_pensar}), encoding="utf-8")
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------- conexión
     def _elegir_modelo(self) -> None:
@@ -288,7 +311,9 @@ class CoachLLM:
         self.candidatos = cadena
         # No se hace ninguna llamada de prueba: la cuota gratuita es de pocos pedidos por día y por
         # modelo. Si un modelo está saturado o sin cuota, la primera llamada real pasa al siguiente.
-        self.modelo, self.estado = cadena[0], "conectado"
+        recordado = self._ultimo.get("respuesta")
+        self.modelo, self.estado = (recordado if recordado in cadena else cadena[0]), "conectado"
+        self._ultimo = {k: v for k, v in self._ultimo.items() if v in cadena}
 
     @staticmethod
     def _resumir(e: Exception) -> str:
@@ -316,9 +341,11 @@ class CoachLLM:
                 config["thinkingConfig"] = {"thinkingBudget": 0}
             else:
                 config.pop("thinkingConfig", None)
+            _registrar_pedido(modelo, 0)
             r = requests.post(f"{API}/models/{modelo}:generateContent", json=cuerpo,
                               headers={"x-goog-api-key": self.clave}, timeout=espera)
-            _registrar_pedido(modelo, r.status_code)
+            if r.status_code == 429:
+                _registrar_pedido(modelo, 429)
             if r.status_code == 400 and self._sin_pensar.get(modelo, True):
                 self._sin_pensar[modelo] = False   # este modelo no permite apagar el razonamiento
                 config["maxOutputTokens"] = config.get("maxOutputTokens", 600) + 1500
@@ -359,6 +386,7 @@ class CoachLLM:
                 self._ultimo[uso] = n
                 if uso == "respuesta":
                     self.modelo = n
+                self._anotar()
                 return texto
             except Exception as e:
                 ultimo = e

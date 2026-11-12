@@ -23,19 +23,117 @@ DIR_MODELOS = RAIZ / "modelos"
 _lock = threading.Lock()
 
 
+# --------------------------------------------------------------------------------------
+# Perfiles: cada persona tiene sus propias muestras, sus modelos y la "firma" de su cara
+# (proporciones entre puntos fijos del rostro), que sirve para reconocerla por la cámara.
+# --------------------------------------------------------------------------------------
+ARCHIVO_PERFILES = DIR_DATOS / "perfiles.json"
+_perfiles: dict | None = None
+
+
+def _guardar_perfiles() -> None:
+    DIR_DATOS.mkdir(exist_ok=True)
+    ARCHIVO_PERFILES.write_text(json.dumps(_perfiles, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _cargar_perfiles() -> dict:
+    global _perfiles
+    if _perfiles is None:
+        if ARCHIVO_PERFILES.exists():
+            _perfiles = json.loads(ARCHIVO_PERFILES.read_text(encoding="utf-8"))
+        else:
+            # Primera vez: los datos que ya existían pasan a ser el primer perfil
+            _perfiles = {"activo": "p1", "perfiles": {"p1": {"nombre": "Franco", "firma": None}}}
+            for modalidad in ("cara", "voz"):
+                movimientos = [(DIR_DATOS / f"muestras_{modalidad}.csv", DIR_DATOS / "perfiles" / "p1")]
+                movimientos += [(DIR_MODELOS / f"personal_{modalidad}{ext}", DIR_MODELOS / "perfiles" / "p1")
+                                for ext in (".joblib", ".json")]
+                for origen, carpeta in movimientos:
+                    if origen.exists():
+                        carpeta.mkdir(parents=True, exist_ok=True)
+                        origen.replace(carpeta / origen.name)
+            _guardar_perfiles()
+    return _perfiles
+
+
+def perfil_activo() -> str:
+    return _cargar_perfiles()["activo"]
+
+
+def nombre_perfil(pid: str | None = None) -> str:
+    p = _cargar_perfiles()
+    return p["perfiles"][pid or p["activo"]]["nombre"]
+
+
+def perfiles() -> dict:
+    p = _cargar_perfiles()
+    return {"activo": p["activo"],
+            "lista": [{"id": pid, "nombre": d["nombre"], "tiene_firma": bool(d.get("firma"))}
+                      for pid, d in p["perfiles"].items()]}
+
+
+def crear_perfil(nombre: str) -> str:
+    nombre = " ".join(nombre.split())[:40]
+    if not nombre:
+        raise ValueError("El perfil necesita un nombre.")
+    p = _cargar_perfiles()
+    with _lock:
+        if any(d["nombre"].lower() == nombre.lower() for d in p["perfiles"].values()):
+            raise ValueError("Ya hay un perfil con ese nombre.")
+        pid = f"p{1 + max(int(k[1:]) for k in p['perfiles'])}"
+        p["perfiles"][pid] = {"nombre": nombre, "firma": None}
+        p["activo"] = pid
+        _guardar_perfiles()
+    return pid
+
+
+def activar_perfil(pid: str) -> None:
+    p = _cargar_perfiles()
+    if pid not in p["perfiles"]:
+        raise ValueError("Ese perfil no existe.")
+    with _lock:
+        p["activo"] = pid
+        _guardar_perfiles()
+
+
+def firmas() -> dict[str, np.ndarray]:
+    """Firma facial media de cada perfil que ya registró su cara."""
+    return {pid: np.array(d["firma"]["media"], dtype=np.float32)
+            for pid, d in _cargar_perfiles()["perfiles"].items() if d.get("firma") and d["firma"]["n"] >= 8}
+
+
+def acumular_firma(vectores: list) -> None:
+    """Suma mediciones de la cara a la firma del perfil activo (promedio acumulado)."""
+    if not vectores:
+        return
+    p = _cargar_perfiles()
+    with _lock:
+        d = p["perfiles"][p["activo"]]
+        f = d.get("firma") or {"n": 0, "media": [0.0] * len(vectores[0])}
+        media, n = np.array(f["media"], dtype=np.float64), int(f["n"])
+        for v in vectores:
+            if len(v) != len(media):
+                continue
+            n_eff = min(n, 400)                    # tras 400 mediciones se vuelve una media móvil
+            media = (media * n_eff + np.array(v, dtype=np.float64)) / (n_eff + 1)
+            n += 1
+        d["firma"] = {"n": n, "media": [round(float(x), 5) for x in media]}
+        _guardar_perfiles()
+
+
 def _csv(modalidad: str) -> Path:
-    return DIR_DATOS / f"muestras_{modalidad}.csv"
+    return DIR_DATOS / "perfiles" / perfil_activo() / f"muestras_{modalidad}.csv"
 
 
 def _modelo(modalidad: str) -> Path:
-    return DIR_MODELOS / f"personal_{modalidad}.joblib"
+    return DIR_MODELOS / "perfiles" / perfil_activo() / f"personal_{modalidad}.joblib"
 
 
 def agregar(modalidad: str, etiqueta: str, rafaga: str, columnas: list[str], valores: list[float]) -> None:
     if etiqueta not in EMOCIONES:
         raise ValueError(f"Etiqueta desconocida: {etiqueta}")
-    DIR_DATOS.mkdir(exist_ok=True)
     ruta = _csv(modalidad)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         nuevo = not ruta.exists()
         with ruta.open("a", newline="", encoding="utf-8") as f:
@@ -119,7 +217,7 @@ def entrenar(modalidad: str) -> dict:
         if acc > mejor_acc:
             mejor, mejor_acc, mejor_pred = nombre, acc, pred
     final = candidatos[mejor].fit(X, y)
-    DIR_MODELOS.mkdir(exist_ok=True)
+    _modelo(modalidad).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"modelo": final, "clases": list(final.classes_), "columnas": columnas}, _modelo(modalidad))
     matriz = confusion_matrix(y, mejor_pred, labels=clases).tolist()
     meta = {
@@ -139,14 +237,14 @@ class ModeloPersonal:
     def __init__(self, modalidad: str):
         self.modalidad = modalidad
         self._paquete = None
-        self._mtime = 0.0
+        self._mtime = None
 
     def _cargar(self):
         ruta = _modelo(self.modalidad)
         if not ruta.exists():
             self._paquete = None
             return None
-        m = ruta.stat().st_mtime
+        m = (str(ruta), ruta.stat().st_mtime)      # cambia al entrenar o al cambiar de perfil
         if self._paquete is None or m != self._mtime:
             import joblib
             self._paquete = joblib.load(ruta)

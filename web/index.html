@@ -19,6 +19,7 @@
     <button class="chip" id="chip-camara" title="Encender o apagar la cámara"><span class="punto"></span><span class="txt">Cámara</span></button>
     <button class="chip" id="chip-mic" title="Encender o apagar el micrófono"><span class="punto"></span><span class="txt">Micrófono</span></button>
     <span class="chip fijo" id="chip-coach"><span class="punto"></span><span class="txt">Coach</span></span>
+    <button class="chip" id="chip-perfil" title="Perfil de la persona que está hablando. Tocá para cambiarlo o crear uno."><span class="punto"></span><span class="txt">Perfil</span></button>
     <label class="chip" title="Voz aguda de robot de caricatura, con megáfono de juguete y eco. Destildala para usar la voz natural."><input type="checkbox" id="chk-caricatura" checked><span class="txt">Voz de caricatura</span></label>
     <span class="chip fijo" id="chip-uso" title="Pedidos hechos a Gemini en el día de cuota actual"><span class="punto"></span><span class="txt">Gemini hoy</span></span>
     <span class="chip fijo" id="chip-3d"><span class="punto"></span><span class="txt">3D</span></span>
@@ -37,9 +38,10 @@
       <div class="titulo-panel flotante"><h2>Cara de Ottoman</h2><span class="pastilla" id="estado-robot">En reposo</span></div>
       <canvas id="ojos" width="640" height="250"></canvas>
     </div>
-    <div class="panel sin-relleno crecer">
+    <div class="panel sin-relleno crecer" id="sim-caja" tabindex="0" aria-label="Simulador 3D. Arrastrá para mover la cámara, clic derecho para girar, rueda para acercar, R para reiniciar y C para ver la cara.">
       <div class="titulo-panel flotante"><h2>Cuerpo · simulador 3D</h2></div>
-      <img id="sim" alt="Simulación 3D del robot Ottoman">
+      <img id="sim" alt="Simulación 3D del robot Ottoman" draggable="false">
+      <p class="ayuda-sim">Arrastrar: mover · Clic derecho: girar · Rueda: zoom · <kbd>R</kbd> reiniciar · <kbd>C</kbd> cara</p>
       <div class="aviso-sim" id="aviso-sim" hidden>El simulador 3D no está disponible en esta máquina.</div>
     </div>
     <div class="panel">
@@ -92,6 +94,10 @@
         <ul class="rasgos" id="rasgos"><li class="apagado">Los rasgos de tu cara aparecen acá cuando la cámara está encendida.</li></ul>
       </div>
       <p class="fuente" id="fuente-cara"></p>
+      <div class="nota" id="aviso-persona" hidden>
+        <p id="aviso-persona-texto"></p>
+        <div class="fila"><button class="boton primario" id="btn-perfil-nuevo-aviso">Crear perfil nuevo</button><button class="boton" id="btn-soy-yo">Soy yo</button></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -124,6 +130,13 @@
     <button class="boton suave" id="dlg-cerrar">Cerrar</button>
   </div>
   <p class="apagado">Enseñale a Ottoman cómo se ven y suenan <em>tus</em> emociones. Solo se guardan números (medidas de la cara y de la voz) en esta computadora; nunca fotos ni audios.</p>
+  <div class="perfil-fila">
+    <label for="ent-perfil">Perfil</label>
+    <select id="ent-perfil"></select>
+    <button class="boton" id="ent-perfil-nuevo">Nuevo perfil</button>
+    <label class="casilla"><input type="checkbox" id="chk-reconocer" checked> Reconocer a la persona por la cámara</label>
+  </div>
+  <p class="apagado" id="ent-perfil-nota"></p>
   <div class="pestanas">
     <button class="pestana activa" data-mod="cara">Mi cara</button>
     <button class="pestana" data-mod="voz">Mi voz</button>

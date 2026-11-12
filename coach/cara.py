@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from .emociones import EMOCIONES, normalizar
+from . import entrenamiento
 from .entrenamiento import ModeloPersonal, cargar
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -48,6 +49,24 @@ ETIQUETAS_RASGOS = {
 }
 
 
+# Puntos del rostro que casi no se mueven al gesticular (contorno de ojos, nariz, frente,
+# mentón, pómulos y costados). Sus distancias relativas son la "firma" de una cara.
+PUNTOS_FIRMA = (33, 263, 133, 362, 1, 168, 6, 98, 327, 152, 10, 234, 454, 93, 323)
+UMBRAL_MISMA_PERSONA = 0.026     # diferencia relativa media por debajo de la cual es la misma cara
+UMBRAL_OTRA_PERSONA = 0.038      # por encima, se considera otra persona
+
+
+def firma_de(puntos, ancho: int, alto: int) -> list[float] | None:
+    """Distancias entre puntos fijos del rostro, en 3D y relativas a la separación de los ojos."""
+    p = np.array([[puntos[i].x * ancho, puntos[i].y * alto, puntos[i].z * ancho] for i in PUNTOS_FIRMA])
+    entre_ojos = float(np.linalg.norm(p[0] - p[1]))
+    if entre_ojos < 20:              # cara demasiado chica en la imagen para medirla bien
+        return None
+    d = np.linalg.norm(p[:, None, :] - p[None, :, :], axis=2)
+    i, j = np.triu_indices(len(PUNTOS_FIRMA), k=1)
+    return [float(x) for x in d[i, j] / entre_ojos]
+
+
 class AnalizadorCara:
     def __init__(self):
         self._det = None
@@ -58,6 +77,12 @@ class AnalizadorCara:
         self._ventana: deque = deque(maxlen=400)   # (t, probs, detectada)
         self._neutro: dict[str, float] | None = None
         self._neutro_t = 0.0
+        # Reconocimiento de la persona
+        self.reconocer = True
+        self._firmas: deque = deque(maxlen=24)     # (t, firma) de los últimos cuadros de frente
+        self._persona = {"estado": "sin_datos"}
+        self._t_persona = 0.0
+        self._racha = ("", 0)
 
     def _detector(self):
         if self._det is None:
@@ -134,7 +159,12 @@ class AnalizadorCara:
             rasgos[nombre] = max(0.0, min(1.0, bruto - reposo))
 
         probs_reglas = self._reglas(rasgos)
-        probs_modelo = self.modelo.predecir(valores)
+        firma = firma_de(pts, arr.shape[1], arr.shape[0]) if abs(inclinacion) < 12 else None
+        if firma:
+            self._firmas.append((time.time(), firma))
+        # Si la cara no es la del perfil activo, su modelo personal no aplica: quedan las reglas base
+        desconocida = self._persona.get("estado") == "desconocido"
+        probs_modelo = None if desconocida else self.modelo.predecir(valores)
         if probs_modelo:
             probs = normalizar({e: 0.75 * probs_modelo[e] + 0.25 * probs_reglas[e] for e in EMOCIONES})
             fuente = "modelo personal + reglas"
@@ -153,6 +183,7 @@ class AnalizadorCara:
             "encuadre": encuadre,
             "columnas": self._columnas,
             "valores": valores,
+            "firma": firma,
         }
 
     @staticmethod
@@ -169,6 +200,61 @@ class AnalizadorCara:
         }
         exps = {e: math.exp(4.5 * v) for e, v in puntajes.items()}
         return normalizar(exps)
+
+    # ---------------------------------------------------------------- quién está frente a la cámara
+    def firmas_recientes(self, segundos: float = 6.0) -> list:
+        limite = time.time() - segundos
+        return [f for t, f in self._firmas if t >= limite]
+
+    def olvidar_persona(self) -> None:
+        self._persona, self._racha, self._t_persona = {"estado": "sin_datos"}, ("", 0), 0.0
+
+    def identificar(self) -> dict:
+        """Compara la cara de los últimos segundos con la firma de cada perfil.
+
+        Estados: reconocido | cambio (se pasó solo a otro perfil conocido) | desconocido |
+        sin_registro (el perfil activo todavía no registró su cara) | sin_datos.
+        """
+        ahora = time.time()
+        if ahora - self._t_persona < 1.5:
+            return self._persona
+        self._t_persona = ahora
+        if self._persona.get("estado") == "cambio":
+            self._persona = {"estado": "reconocido"}
+        recientes = self.firmas_recientes()
+        conocidas = entrenamiento.firmas()
+        activo = entrenamiento.perfil_activo()
+        if not self.reconocer or len(recientes) < 8:
+            if not self.reconocer:
+                self._persona = {"estado": "sin_datos"}
+            return self._persona
+        if activo not in conocidas and not conocidas:
+            self._persona = {"estado": "sin_registro"}
+            return self._persona
+        actual = np.median(np.array(recientes, dtype=np.float32), axis=0)
+        dist = {pid: float(np.mean(np.abs(actual - mu) / np.maximum(mu, 1e-3)))
+                for pid, mu in conocidas.items() if len(mu) == len(actual)}
+        mejor = min(dist, key=dist.get) if dist else None
+        d_activo = dist.get(activo)
+        if d_activo is not None and d_activo <= UMBRAL_MISMA_PERSONA:
+            self._racha = ("", 0)
+            self._persona = {"estado": "reconocido", "distancia": round(d_activo, 4)}
+        elif mejor and mejor != activo and dist[mejor] <= UMBRAL_MISMA_PERSONA and \
+                (d_activo is None or dist[mejor] < d_activo - 0.006):
+            n = self._racha[1] + 1 if self._racha[0] == mejor else 1
+            self._racha = (mejor, n)
+            if n >= 2:                                # dos lecturas seguidas: es otro perfil conocido
+                entrenamiento.activar_perfil(mejor)
+                self._racha = ("", 0)
+                self._persona = {"estado": "cambio", "distancia": round(dist[mejor], 4)}
+        elif d_activo is not None and d_activo >= UMBRAL_OTRA_PERSONA:
+            n = self._racha[1] + 1 if self._racha[0] == "?" else 1
+            self._racha = ("?", n)
+            if n >= 3:                                # tres lecturas seguidas: no es nadie conocido
+                self._persona = {"estado": "desconocido", "distancia": round(d_activo, 4)}
+        elif d_activo is None:
+            self._persona = {"estado": "sin_registro"}
+        return self._persona
 
     # ---------------------------------------------------------------- ventana temporal
     def resumen_ventana(self, segundos: float = 8.0) -> dict | None:

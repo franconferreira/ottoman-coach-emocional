@@ -54,6 +54,8 @@ def _estado() -> dict:
         "pesos": PESOS,
         "reglas": reglas.tabla_reglas(),
         "turnos": len(sesion["historial"]),
+        "perfiles": entrenamiento.perfiles(),
+        "reconocer": cara.reconocer,
     }
 
 
@@ -71,11 +73,58 @@ async def api_cara(request: Request, etiqueta: str | None = None, rafaga: str | 
     guardada = False
     if etiqueta and r.get("detectada"):
         entrenamiento.agregar("cara", etiqueta, rafaga or "r0", r["columnas"], r["valores"])
+        if r.get("firma"):
+            entrenamiento.acumular_firma([r["firma"]])   # cada captura también enseña a reconocer la cara
         guardada = True
-    r.pop("columnas", None)
-    r.pop("valores", None)
+    for clave in ("columnas", "valores", "firma"):
+        r.pop(clave, None)
     r["guardada"] = guardada
+    antes = entrenamiento.perfil_activo()
+    persona = dict(cara.identificar()) if etiqueta is None else {"estado": "reconocido"}
+    if entrenamiento.perfil_activo() != antes:
+        voz.reiniciar()                                  # otra persona: otra voz de referencia
+    persona["perfil"] = entrenamiento.perfil_activo()
+    persona["nombre"] = entrenamiento.nombre_perfil()
+    r["persona"] = persona
     return r
+
+
+# ------------------------------------------------------------------ perfiles
+@app.get("/api/perfiles")
+def api_perfiles():
+    return entrenamiento.perfiles()
+
+
+@app.post("/api/perfiles")
+async def api_perfil_nuevo(request: Request):
+    d = await request.json()
+    try:
+        if d.get("id"):
+            entrenamiento.activar_perfil(str(d["id"]))
+        else:
+            entrenamiento.crear_perfil(str(d.get("nombre") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if d.get("registrar_cara"):
+        entrenamiento.acumular_firma(cara.firmas_recientes())   # la cara que está ahora frente a la cámara
+    cara.olvidar_persona()
+    voz.reiniciar()
+    return entrenamiento.perfiles()
+
+
+@app.post("/api/perfiles/soy_yo")
+def api_soy_yo():
+    """La persona confirma que es la del perfil activo: se refuerza la firma de su cara."""
+    entrenamiento.acumular_firma(cara.firmas_recientes())
+    cara.olvidar_persona()
+    return entrenamiento.perfiles()
+
+
+@app.post("/api/perfiles/reconocer")
+async def api_reconocer(request: Request):
+    cara.reconocer = bool((await request.json()).get("activo"))
+    cara.olvidar_persona()
+    return {"activo": cara.reconocer}
 
 
 # ------------------------------------------------------------------ turno completo
@@ -198,6 +247,22 @@ async def api_cuerpo(request: Request):
     return {"modo": None}
 
 
+@app.post("/api/camara")
+async def api_camara(request: Request):
+    d = await request.json()
+    if not cuerpo:
+        return {}
+    return cuerpo.camara(str(d.get("accion")), float(d.get("dx") or 0), float(d.get("dy") or 0))
+
+
+@app.post("/api/ojos")
+async def api_ojos(request: Request):
+    d = await request.json()
+    if cuerpo:
+        cuerpo.ojos(str(d.get("diseno") or "capsula"))
+    return {}
+
+
 @app.get("/sim/stream")
 async def sim_stream():
     if not cuerpo:
@@ -261,7 +326,13 @@ def audio(nombre: str):
 
 @app.get("/")
 def inicio():
-    return FileResponse(RAIZ / "web" / "index.html", headers={"Cache-Control": "no-store"})
+    """Sirve la página con la versión de cada archivo en su dirección, para que el navegador
+    nunca use una copia vieja guardada en caché después de un cambio."""
+    html = (RAIZ / "web" / "index.html").read_text(encoding="utf-8")
+    for archivo in ("estilo.css", "ojos.js", "app.js"):
+        version = int((RAIZ / "web" / archivo).stat().st_mtime)
+        html = html.replace(f"/web/{archivo}", f"/web/{archivo}?v={version}")
+    return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
 @app.exception_handler(Exception)

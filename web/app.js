@@ -1,6 +1,6 @@
 /* Dashboard de Ottoman: dispositivos, chat, lectura emocional y entrenamiento. */
 const $ = (id) => document.getElementById(id);
-const COLOR = { ALEGRIA: "#fbbf24", TRISTEZA: "#60a5fa", ENOJO: "#f87171", ANSIEDAD: "#c084fc", NEUTRO: "#94a3b8" };
+const COLOR = { ALEGRIA: "#d9e24a", TRISTEZA: "#60a5fa", ENOJO: "#f87171", ANSIEDAD: "#c084fc", NEUTRO: "#94a3b8" };
 const NOMBRE = { ALEGRIA: "Alegría", TRISTEZA: "Tristeza", ENOJO: "Enojo", ANSIEDAD: "Ansiedad", NEUTRO: "Neutro" };
 const ORDEN = ["ALEGRIA", "TRISTEZA", "ENOJO", "ANSIEDAD", "NEUTRO"];
 const RASGOS_VISIBLES = ["sonrisa", "ceño", "cejas_internas", "boca_abajo", "ojos_abiertos", "cejas_arriba", "labios_apretados", "boca_abierta"];
@@ -159,7 +159,44 @@ async function cicloCamara() {
   } catch (e) { /* un cuadro perdido no importa */ }
   enVuelo = false;
 }
+/* Perfiles: quién está frente a la cámara */
+function pintarPerfil() {
+  const p = st.info?.perfiles; if (!p) return;
+  const activo = p.lista.find((x) => x.id === p.activo);
+  $("chip-perfil").className = "chip " + (st.persona === "desconocido" ? "aviso" : "ok");
+  $("chip-perfil").querySelector(".txt").textContent = `Perfil: ${activo?.nombre || "—"}` + (st.persona === "desconocido" ? " (no reconocido)" : "");
+  $("ent-perfil").innerHTML = p.lista.map((x) => `<option value="${x.id}" ${x.id === p.activo ? "selected" : ""}>${x.nombre}</option>`).join("");
+  $("chk-reconocer").checked = st.info.reconocer !== false;
+  $("ent-perfil-nota").textContent = activo?.tiene_firma
+    ? `Ottoman ya conoce la cara de ${activo.nombre}. Cada captura de «Mi cara» lo refuerza.`
+    : `Ottoman todavía no conoce la cara de ${activo?.nombre || "este perfil"}: capturá una ráfaga en «Mi cara» y va a poder reconocerla.`;
+}
+async function refrescarPerfiles() { try { st.info = await api("/api/estado"); pintarEstadoGeneral(); } catch (e) {} }
+async function crearPerfil(registrarCara) {
+  const nombre = prompt("¿Cómo se llama la persona del perfil nuevo?");
+  if (!nombre || !nombre.trim()) return;
+  try {
+    await api("/api/perfiles", { method: "POST", headers: { "Content-Type": "application/json" },
+                                 body: JSON.stringify({ nombre, registrar_cara: !!registrarCara }) });
+    st.persona = "reconocido"; $("aviso-persona").hidden = true;
+    await refrescarPerfiles(); if ($("dlg-entrenar").open) refrescarEntrenamiento();
+    avisar(`Perfil «${nombre.trim()}» creado. Hasta que entrene, Ottoman usa las reglas generales para leer su cara y su voz.`);
+  } catch (e) { alert(e.message); }
+}
+function pintarPersona(persona) {
+  if (!persona) return;
+  const previo = st.persona; st.persona = persona.estado;
+  if (persona.estado === "cambio") { avisar(`Reconocí a ${persona.nombre}: cambié a su perfil.`); refrescarPerfiles(); }
+  const aviso = $("aviso-persona");
+  if (persona.estado === "desconocido") {
+    $("aviso-persona-texto").textContent = `No reconozco esta cara como la de ${persona.nombre}. Mientras tanto leo las expresiones con las reglas generales.`;
+    $("btn-soy-yo").textContent = `Soy ${persona.nombre}`;
+    aviso.hidden = false;
+  } else aviso.hidden = true;
+  if (previo !== st.persona) pintarPerfil();
+}
 function pintarCara(r) {
+  pintarPersona(r.persona);
   const c = $("capa"), g = c.getContext("2d");
   g.clearRect(0, 0, c.width, c.height);
   const lista = $("rasgos");
@@ -169,7 +206,7 @@ function pintarCara(r) {
     return;
   }
   const [x0, y0, x1, y1] = r.caja;
-  g.strokeStyle = r.encuadre === "Bien encuadrado" ? "#5eead4" : "#fbbf24"; g.lineWidth = 2;
+  g.strokeStyle = r.encuadre === "Bien encuadrado" ? "#4ade80" : "#fbbf24"; g.lineWidth = 2;
   g.beginPath(); g.roundRect(x0 * c.width, y0 * c.height, (x1 - x0) * c.width, (y1 - y0) * c.height, 10); g.stroke();
   $("encuadre").textContent = r.encuadre;
   if (!lista.dataset.listo) {
@@ -446,6 +483,7 @@ async function capturar() {
 /* ===================== Estado general ===================== */
 function pintarEstadoGeneral() {
   const i = st.info; if (!i) return;
+  pintarPerfil();
   const coach = $("chip-coach"), tres = $("chip-3d");
   coach.className = "chip fijo " + (i.llm.disponible ? "ok" : "aviso");
   coach.querySelector(".txt").textContent = i.llm.disponible ? `Coach: Gemini (${i.llm.modelo})`
@@ -466,8 +504,43 @@ function pintarEstadoGeneral() {
     "No es un profesional de la salud y no da consejo médico.";
 }
 
+/* Cámara del simulador: arrastrar mueve, clic derecho gira, la rueda acerca o aleja.
+   Con el simulador enfocado (un clic sobre él), R reinicia la vista y C hace un primer plano
+   de la cara. Las teclas solo actúan ahí: escribir en el chat no las dispara. */
+function prepararCamaraSim() {
+  const caja = $("sim-caja");
+  const enviar = (accion, dx = 0, dy = 0) => fetch("/api/camara", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                                    body: JSON.stringify({ accion, dx, dy }) }).catch(() => {});
+  let arrastre = null, dx = 0, dy = 0, ultimo = 0;
+  const volcar = () => { if (arrastre && (dx || dy)) { enviar(arrastre.accion, dx, dy); dx = dy = 0; ultimo = performance.now(); } };
+  caja.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 0 && ev.button !== 2) return;
+    ev.preventDefault(); caja.focus();
+    arrastre = { accion: ev.button === 2 ? "rotar" : "mover", x: ev.clientX, y: ev.clientY };
+    caja.classList.add("arrastrando");
+  });
+  window.addEventListener("mousemove", (ev) => {
+    if (!arrastre) return;
+    dx += ev.clientX - arrastre.x; dy += ev.clientY - arrastre.y; arrastre.x = ev.clientX; arrastre.y = ev.clientY;
+    if (performance.now() - ultimo > 40) volcar();
+  });
+  window.addEventListener("mouseup", () => { volcar(); arrastre = null; caja.classList.remove("arrastrando"); });
+  caja.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  caja.addEventListener("wheel", (ev) => { ev.preventDefault(); enviar("zoom", 0, ev.deltaY); }, { passive: false });
+  caja.addEventListener("keydown", (ev) => {
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    const tecla = ev.key.toLowerCase();
+    if (tecla === "r") { ev.preventDefault(); enviar("reset"); }
+    if (tecla === "c") { ev.preventDefault(); enviar("cara"); }
+  });
+}
+
 async function iniciar() {
+  // Los ojos de la cabeza 3D muestran el mismo diseño que el panel de la cara
+  Ojos.alCambiar = (diseno) => fetch("/api/ojos", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ diseno }) }).catch(() => {});
   Ojos.iniciar($("ojos"));
+  prepararCamaraSim();
   try { $("chk-caricatura").checked = localStorage.getItem("voz_caricatura") !== "no"; } catch (e) {}
   $("chk-caricatura").onchange = (ev) => { try { localStorage.setItem("voz_caricatura", ev.target.checked ? "si" : "no"); } catch (e) {} };
   try {
@@ -506,6 +579,16 @@ async function iniciar() {
   };
 
   const dlg = $("dlg-entrenar");
+  $("chip-perfil").onclick = () => { dlg.showModal(); refrescarEntrenamiento(); };
+  $("ent-perfil").onchange = async (ev) => {
+    await api("/api/perfiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ev.target.value }) });
+    st.persona = "reconocido"; refrescarEntrenamiento();
+  };
+  $("ent-perfil-nuevo").onclick = () => crearPerfil(false);
+  $("btn-perfil-nuevo-aviso").onclick = () => crearPerfil(true);
+  $("btn-soy-yo").onclick = async () => { await api("/api/perfiles/soy_yo", { method: "POST" }); st.persona = "reconocido"; $("aviso-persona").hidden = true; refrescarPerfiles(); };
+  $("chk-reconocer").onchange = (ev) => api("/api/perfiles/reconocer", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                                         body: JSON.stringify({ activo: ev.target.checked }) });
   $("btn-entrenar").onclick = () => { dlg.showModal(); refrescarEntrenamiento(); };
   $("dlg-cerrar").onclick = () => dlg.close();
   document.querySelectorAll(".pestana").forEach((p) => (p.onclick = () => {

@@ -1,0 +1,9 @@
+{
+ "activo": "p1",
+ "perfiles": {
+  "p1": {
+   "nombre": "Franco",
+   "firma": null
+  }
+ }
+}

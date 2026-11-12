@@ -96,7 +96,7 @@
   function cuadro(ahora) {
     const dt = Math.min(0.3, (ahora - previo) / 1000); previo = ahora;
     // Parpadeo y cambio de diseño
-    if (sentido === 1) { cierre += dt / 0.07; if (cierre >= 1) { cierre = 1; if (pendiente) { visible = pendiente; pendiente = null; } sentido = -1; } }
+    if (sentido === 1) { cierre += dt / 0.07; if (cierre >= 1) { cierre = 1; if (pendiente) { visible = pendiente; pendiente = null; if (window.Ojos.alCambiar) window.Ojos.alCambiar(visible); } sentido = -1; } }
     else if (sentido === -1) { cierre -= dt / 0.10; if (cierre <= 0) { cierre = 0; sentido = 0; } }
     tParpadeo -= dt; if (tParpadeo <= 0) { parpadear(); tParpadeo = azar(2.8, 6); }
     // Mirada: se desplaza apenas, sin cambiar de tamaño

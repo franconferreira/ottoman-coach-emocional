@@ -157,6 +157,75 @@ POSE_PENSANDO = GESTOS["pensar"]["pose"]
 POSE_SALUDO = _pose(BRAZO_REPOSO, BRAZO_SALUDO, 0.0, waist_roll=-0.03, cadera=0.04)
 
 
+# --------------------------------------------------------------------------------------
+# Escenario: fondo "atardecer" (cálido, para que el simulador no sea otro bloque azul)
+# --------------------------------------------------------------------------------------
+CIELO_ARRIBA, CIELO_ABAJO = (242, 178, 140), (74, 47, 79)
+PISO_CLARO, PISO_OSCURO = (107, 74, 90), (90, 61, 80)
+BRUMA = (0.725, 0.541, 0.525, 1.0)
+
+
+def _pintar_fondo(model) -> None:
+    """Recolorea el cielo y el piso del escenario de la cátedra sin tocar sus archivos."""
+    import mujoco
+    for i in range(model.ntex):
+        adr = int(model.tex_adr[i])
+        n = int(model.tex_height[i]) * int(model.tex_width[i]) * int(model.tex_nchannel[i])
+        if int(model.tex_nchannel[i]) != 3:
+            continue
+        px = np.array(model.tex_data[adr:adr + n], dtype=np.float32).reshape(-1, 3)
+        if int(model.tex_type[i]) == int(mujoco.mjtTexture.mjTEXTURE_SKYBOX):
+            t = np.clip(px[:, 2:3] / (0.7 * 255.0), 0.0, 1.0)      # el degradado original va de azul a negro
+            nuevo = np.array(CIELO_ABAJO) + (np.array(CIELO_ARRIBA) - np.array(CIELO_ABAJO)) * t
+        else:
+            claro = px.mean(axis=1, keepdims=True) > 64.0           # damero: casilla clara u oscura
+            nuevo = np.where(claro, np.array(PISO_CLARO, dtype=np.float32), np.array(PISO_OSCURO, dtype=np.float32))
+        model.tex_data[adr:adr + n] = nuevo.astype(np.uint8).ravel()
+    model.vis.rgba.haze[:] = BRUMA
+
+
+# --------------------------------------------------------------------------------------
+# Ojos en la cabeza del robot: los mismos diseños del módulo de cara, armados con figuras
+# luminosas simples que se agregan a la escena en cada cuadro (no modifican el modelo).
+# Coordenadas en el plano de la cara: (y hacia la izquierda del robot, z hacia arriba), en metros.
+# --------------------------------------------------------------------------------------
+CARA_EN_TORSO = (0.062, 0.0, 0.392)      # centro del visor, en el marco del torso
+SEPARACION_OJOS = 0.029
+COLOR_OJOS = np.array([0.22, 0.74, 0.97, 1.0], dtype=np.float32)
+CAMARA_INICIAL = {"lookat": [0.0, 0.0, 0.86], "distance": 2.25, "azimuth": 168.0, "elevation": -9.0}
+
+
+def _formas_ojo(diseno: str) -> tuple[list, bool]:
+    """Devuelve (figuras, es_simbolo). Cada figura: (tipo, tamaño, y, z, giro_en_grados).
+
+    tipo: "capsula" (tamaño = radio, medio largo; vertical salvo giro), "esfera" (radio) o
+    "elipsoide" (medio ancho, medio alto). Un símbolo se dibuja una sola vez, centrado.
+    """
+    if diseno == "entrecerrado":
+        return [("capsula", (0.0055, 0.010), 0.0, 0.0, 90.0)], False
+    if diseno == "parpadeo":
+        return [("capsula", (0.0028, 0.011), 0.0, 0.0, 90.0)], False
+    if diseno == "circular":
+        return [("esfera", (0.017,), 0.0, 0.0, 0.0)], False
+    if diseno == "calma":
+        return [("capsula", (0.0035, 0.012), 0.0, 0.0, 66.0)], False     # se espeja en el otro ojo
+    if diseno == "arco":
+        return [("esfera", (0.0042,), 0.013 * math.cos(math.radians(a)), -0.004 + 0.013 * math.sin(math.radians(a)), 0.0)
+                for a in range(20, 161, 20)], False
+    if diseno == "empatia":
+        return [("elipsoide", (0.013, 0.009), 0.0, 0.0, 0.0)], False
+    if diseno == "estrella":
+        return [("elipsoide", (0.0045, 0.019), 0.0, 0.0, 0.0), ("elipsoide", (0.016, 0.0045), 0.0, 0.0, 0.0)], False
+    if diseno == "exclamacion":
+        return [("capsula", (0.006, 0.012), 0.0, 0.010, 0.0), ("esfera", (0.0065,), 0.0, -0.024, 0.0)], True
+    if diseno == "pregunta":
+        gancho = [("esfera", (0.0046,), 0.011 * math.cos(math.radians(a)), 0.013 + 0.011 * math.sin(math.radians(a)), 0.0)
+                  for a in range(180, -61, -30)]
+        return gancho + [("esfera", (0.0046,), 0.0, -0.002, 0.0), ("esfera", (0.0046,), 0.0, -0.010, 0.0),
+                         ("esfera", (0.0058,), 0.0, -0.026, 0.0)], True
+    return [("capsula", (0.010, 0.009), 0.0, 0.0, 0.0)], False            # cápsula
+
+
 def gesto_permitido(gesto: str, actitud: str) -> str:
     """Devuelve el gesto que corresponde hacer en esa actitud."""
     if gesto not in GESTOS:
@@ -177,6 +246,7 @@ class AnimadorCuerpo:
         # El framebuffer fuera de pantalla del modelo es de 640x480 por defecto
         self.model.vis.global_.offwidth = max(int(self.model.vis.global_.offwidth), ancho)
         self.model.vis.global_.offheight = max(int(self.model.vis.global_.offheight), alto)
+        _pintar_fondo(self.model)
 
         self.jmap: dict[str, int] = {}
         for i in range(self.model.njnt):
@@ -194,6 +264,15 @@ class AnimadorCuerpo:
         self._t_modo = time.time()
         self._guion: list[tuple[float, str]] = []   # (segundo desde que empieza a hablar, gesto)
         self._rng = random.Random(7)
+        self._torso = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+
+        # Cámara (la mueve el usuario desde el dashboard) y ojos de la cabeza
+        self._lock_cam = threading.Lock()
+        self._cam_estado = {k: (list(v) if isinstance(v, list) else v) for k, v in CAMARA_INICIAL.items()}
+        self._seguir_cara = False
+        self._diseno_ojos = "capsula"
+        self._t_cambio_ojos = 0.0
+        self._t_parpadeo = time.time() + 3.0
 
         # Filtro de segundo orden por canal (movimiento con aceleración suave)
         self._pos: dict[str, float] = dict(POSE_REPOSO)
@@ -367,18 +446,88 @@ class AnimadorCuerpo:
     def _crear_render(self):
         mj = self._mj
         self._renderer = mj.Renderer(self.model, self.alto, self.ancho)
-        cam = mj.MjvCamera()
-        cam.type = mj.mjtCamera.mjCAMERA_FREE
-        cam.lookat[:] = [0.0, 0.0, 0.86]
-        cam.distance = 2.25
-        cam.azimuth = 168
-        cam.elevation = -9
-        self._cam = cam
+        self._cam = mj.MjvCamera()
+        self._cam.type = mj.mjtCamera.mjCAMERA_FREE
+
+    # ------------------------------------------------------------------ cámara
+    def _cara_en_mundo(self) -> tuple[np.ndarray, np.ndarray]:
+        """Centro del visor de la cabeza y orientación del torso, en coordenadas del mundo."""
+        rot = np.array(self.data.xmat[self._torso]).reshape(3, 3)
+        return np.array(self.data.xpos[self._torso]) + rot @ np.array(CARA_EN_TORSO), rot
+
+    def camara(self, accion: str, dx: float = 0.0, dy: float = 0.0) -> dict:
+        """Mueve la cámara: mover (desplazar), rotar, zoom, reset o cara (primer plano que sigue la cabeza)."""
+        with self._lock_cam:
+            c = self._cam_estado
+            if accion == "rotar":
+                c["azimuth"] = (c["azimuth"] - dx * 0.35) % 360.0
+                c["elevation"] = float(np.clip(c["elevation"] - dy * 0.35, -89.0, 35.0))
+            elif accion == "mover":
+                az, el = math.radians(c["azimuth"]), math.radians(c["elevation"])
+                adelante = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
+                derecha = np.array([math.sin(az), -math.cos(az), 0.0])
+                arriba = np.cross(derecha, adelante)
+                k = c["distance"] * 0.0016
+                c["lookat"] = list(np.array(c["lookat"]) - derecha * dx * k + arriba * dy * k)
+                self._seguir_cara = False
+            elif accion == "zoom":
+                c["distance"] = float(np.clip(c["distance"] * math.exp(dy * 0.0012), 0.35, 7.0))
+            elif accion == "reset":
+                self._cam_estado = {k: (list(v) if isinstance(v, list) else v) for k, v in CAMARA_INICIAL.items()}
+                self._seguir_cara = False
+            elif accion == "cara":
+                c["distance"], c["azimuth"], c["elevation"] = 0.62, 180.0, -3.0
+                self._seguir_cara = True
+            return {"siguiendo_cara": self._seguir_cara}
+
+    # ------------------------------------------------------------------ ojos en la cabeza
+    def ojos(self, diseno: str) -> None:
+        if diseno != self._diseno_ojos:
+            self._diseno_ojos = diseno
+            self._t_cambio_ojos = time.time()
+
+    def _agregar_ojos(self) -> None:
+        mj = self._mj
+        escena = self._renderer.scene
+        centro, rot = self._cara_en_mundo()
+        ahora = time.time()
+        if ahora > self._t_parpadeo:
+            self._t_parpadeo = ahora + self._rng.uniform(2.8, 6.0)
+            self._t_cambio_ojos = ahora
+        diseno = "parpadeo" if ahora - self._t_cambio_ojos < 0.11 else self._diseno_ojos
+        figuras, simbolo = _formas_ojo(diseno)
+        for lado in ((0.0,) if simbolo else (1.0, -1.0)):
+            for tipo, tam, y, z, giro in figuras:
+                if escena.ngeom >= escena.maxgeom:
+                    return
+                espejo = -1.0 if (lado < 0 and not simbolo) else 1.0
+                local = np.array([0.0, lado * SEPARACION_OJOS + y * espejo, z])
+                ang = math.radians(giro * espejo)
+                giro_x = np.array([[1, 0, 0], [0, math.cos(ang), -math.sin(ang)], [0, math.sin(ang), math.cos(ang)]])
+                if tipo == "capsula":
+                    clase, medida = mj.mjtGeom.mjGEOM_CAPSULE, [tam[0], tam[0], tam[1]]
+                elif tipo == "esfera":
+                    clase, medida = mj.mjtGeom.mjGEOM_SPHERE, [tam[0], tam[0], tam[0]]
+                else:
+                    clase, medida = mj.mjtGeom.mjGEOM_ELLIPSOID, [0.006, tam[0], tam[1]]
+                g = escena.geoms[escena.ngeom]
+                mj.mjv_initGeom(g, clase, np.array(medida, dtype=np.float64), centro + rot @ local,
+                                (rot @ giro_x).flatten(), COLOR_OJOS)
+                g.emission = 1.0
+                g.specular = 0.0
+                escena.ngeom += 1
 
     def renderizar(self) -> np.ndarray:
         if not hasattr(self, "_renderer"):
             self._crear_render()
+        with self._lock_cam:
+            c = self._cam_estado
+            if self._seguir_cara:
+                c["lookat"] = list(self._cara_en_mundo()[0])
+            self._cam.lookat[:] = c["lookat"]
+            self._cam.distance, self._cam.azimuth, self._cam.elevation = c["distance"], c["azimuth"], c["elevation"]
         self._renderer.update_scene(self.data, self._cam)
+        self._agregar_ojos()
         return self._renderer.render()
 
     def _bucle(self) -> None:

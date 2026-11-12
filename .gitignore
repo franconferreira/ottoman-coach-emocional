@@ -7,3 +7,6 @@ datos/audio_tmp/
 datos/audio_tmp/
 datos/uso_gemini.json
 *.bak
+datos/memoria_gemini.json
+web/prev/
+web/paletas.html
