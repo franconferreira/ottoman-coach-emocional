@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+requests
+numpy
+scipy
+scikit-learn
+joblib
+mediapipe
+mujoco
+edge-tts
+Pillow

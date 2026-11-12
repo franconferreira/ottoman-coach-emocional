@@ -1,0 +1,57 @@
+{
+ "modalidad": "voz",
+ "modelo": "Red neuronal (MLP 32-16)",
+ "precision_validacion": 0.82,
+ "comparacion": {
+  "Regresión logística": 0.8,
+  "Red neuronal (MLP 32-16)": 0.82
+ },
+ "clases": [
+  "ALEGRIA",
+  "TRISTEZA",
+  "ENOJO",
+  "ANSIEDAD",
+  "NEUTRO"
+ ],
+ "matriz_confusion": [
+  [
+   17,
+   0,
+   2,
+   0,
+   1
+  ],
+  [
+   2,
+   16,
+   1,
+   1,
+   0
+  ],
+  [
+   4,
+   0,
+   14,
+   2,
+   0
+  ],
+  [
+   0,
+   2,
+   2,
+   16,
+   0
+  ],
+  [
+   1,
+   0,
+   0,
+   0,
+   19
+  ]
+ ],
+ "muestras": 100,
+ "rafagas": 100,
+ "validacion": "validación cruzada por ráfagas (5 particiones)",
+ "fecha": "2026-11-12 00:29"
+}

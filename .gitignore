@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+datos/audio_tmp/
+.claude/
+datos/audio_tmp/
+datos/uso_gemini.json
+*.bak

@@ -1,0 +1,57 @@
+{
+ "modalidad": "cara",
+ "modelo": "Regresión logística",
+ "precision_validacion": 0.763,
+ "comparacion": {
+  "Regresión logística": 0.763,
+  "Red neuronal (MLP 32-16)": 0.732
+ },
+ "clases": [
+  "ALEGRIA",
+  "TRISTEZA",
+  "ENOJO",
+  "ANSIEDAD",
+  "NEUTRO"
+ ],
+ "matriz_confusion": [
+  [
+   42,
+   1,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   82,
+   0,
+   12,
+   6
+  ],
+  [
+   0,
+   0,
+   30,
+   15,
+   0
+  ],
+  [
+   0,
+   19,
+   0,
+   78,
+   4
+  ],
+  [
+   0,
+   3,
+   0,
+   33,
+   67
+  ]
+ ],
+ "muestras": 392,
+ "rafagas": 27,
+ "validacion": "validación cruzada por ráfagas (3 particiones)",
+ "fecha": "2026-11-12 00:35"
+}

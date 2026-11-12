@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ottoman · Coach emocional</title>
+<link rel="stylesheet" href="/web/estilo.css">
+</head>
+<body>
+<header class="barra">
+  <div class="marca">
+    <span class="logo" aria-hidden="true"><i></i><i></i></span>
+    <div>
+      <h1>Ottoman</h1>
+      <p>Coach emocional · un pato de goma para lo que sentís</p>
+    </div>
+  </div>
+  <div class="dispositivos">
+    <button class="chip" id="chip-camara" title="Encender o apagar la cámara"><span class="punto"></span><span class="txt">Cámara</span></button>
+    <button class="chip" id="chip-mic" title="Encender o apagar el micrófono"><span class="punto"></span><span class="txt">Micrófono</span></button>
+    <span class="chip fijo" id="chip-coach"><span class="punto"></span><span class="txt">Coach</span></span>
+    <label class="chip" title="Voz aguda de robot de caricatura, con megáfono de juguete y eco. Destildala para usar la voz natural."><input type="checkbox" id="chk-caricatura" checked><span class="txt">Voz de caricatura</span></label>
+    <span class="chip fijo" id="chip-uso" title="Pedidos hechos a Gemini en el día de cuota actual"><span class="punto"></span><span class="txt">Gemini hoy</span></span>
+    <span class="chip fijo" id="chip-3d"><span class="punto"></span><span class="txt">3D</span></span>
+  </div>
+  <div class="acciones">
+    <button class="boton" id="btn-buscar">Buscar dispositivos</button>
+    <button class="boton" id="btn-entrenar">Entrenar con mis datos</button>
+    <button class="boton suave" id="btn-nueva">Nueva conversación</button>
+  </div>
+</header>
+
+<main class="tablero">
+  <!-- ============ Columna Ottoman ============ -->
+  <section class="col">
+    <div class="panel sin-relleno">
+      <div class="titulo-panel flotante"><h2>Cara de Ottoman</h2><span class="pastilla" id="estado-robot">En reposo</span></div>
+      <canvas id="ojos" width="640" height="250"></canvas>
+    </div>
+    <div class="panel sin-relleno crecer">
+      <div class="titulo-panel flotante"><h2>Cuerpo · simulador 3D</h2></div>
+      <img id="sim" alt="Simulación 3D del robot Ottoman">
+      <div class="aviso-sim" id="aviso-sim" hidden>El simulador 3D no está disponible en esta máquina.</div>
+    </div>
+    <div class="panel">
+      <div class="titulo-panel"><h2>Actitud del coach</h2><span class="pastilla acento" id="actitud-nombre">—</span></div>
+      <p class="apagado" id="actitud-desc">Todavía no hay una decisión. Hablale o escribile para empezar.</p>
+      <dl class="modulos">
+        <div><dt>Cuerpo</dt><dd id="mod-cuerpo">—</dd></div>
+        <div><dt>Cara</dt><dd id="mod-cara">—</dd></div>
+        <div><dt>Léxico</dt><dd id="mod-lexico">—</dd></div>
+        <div><dt>Voz</dt><dd id="mod-voz">—</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ============ Columna chat ============ -->
+  <section class="col">
+    <div class="panel crecer chat">
+      <div class="titulo-panel"><h2>Conversación</h2><span class="apagado" id="origen-llm"></span></div>
+      <div class="mensajes" id="mensajes" aria-live="polite">
+        <div class="vacio" id="chat-vacio">
+          <p><strong>Contale a Ottoman cómo venís.</strong></p>
+          <p>Podés hablarle con el micrófono o escribirle acá abajo. No hace falta decirlo perfecto.</p>
+        </div>
+      </div>
+      <div class="nivel" id="nivel" hidden><span></span></div>
+      <form class="entrada" id="form-chat" autocomplete="off">
+        <button type="button" class="boton-mic" id="btn-hablar" title="Hablar" aria-label="Hablar">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15a4 4 0 0 0 4-4V6a4 4 0 0 0-8 0v5a4 4 0 0 0 4 4Zm6-4a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.9V22h2v-3.1A8 8 0 0 0 20 11h-2Z"/></svg>
+        </button>
+        <input id="texto" type="text" placeholder="Escribí lo que quieras contarle…" maxlength="600">
+        <button type="submit" class="boton primario" id="btn-enviar">Enviar</button>
+      </form>
+      <p class="pie-chat" id="pie-chat">Ottoman acompaña con una conversación. No es un profesional de la salud y no da consejo médico.</p>
+    </div>
+  </section>
+
+  <!-- ============ Columna lectura ============ -->
+  <section class="col">
+    <div class="panel">
+      <div class="titulo-panel"><h2>Lo que ve de vos</h2><span class="pastilla" id="encuadre">Sin cámara</span></div>
+      <div class="camara-fila">
+        <div class="camara">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="capa" width="320" height="240"></canvas>
+          <div class="camara-vacia" id="camara-vacia">
+            <p>Cámara apagada o no detectada</p>
+            <button class="boton" id="btn-camara-reintentar">Conectar cámara</button>
+          </div>
+        </div>
+        <ul class="rasgos" id="rasgos"><li class="apagado">Los rasgos de tu cara aparecen acá cuando la cámara está encendida.</li></ul>
+      </div>
+      <p class="fuente" id="fuente-cara"></p>
+    </div>
+
+    <div class="panel">
+      <div class="titulo-panel"><h2>Veredicto emocional</h2><span class="apagado" id="veredicto-tiempo"></span></div>
+      <div class="veredicto">
+        <div class="veredicto-principal">
+          <span class="emocion" id="v-emocion">—</span>
+          <span class="apagado" id="v-detalle">Aparece después de tu primer mensaje</span>
+        </div>
+        <ul class="barras" id="v-barras"></ul>
+      </div>
+      <ul class="senales" id="v-senales"></ul>
+      <p class="nota" id="v-nota" hidden></p>
+    </div>
+
+    <div class="panel crecer">
+      <div class="titulo-panel"><h2>Reglas que eligen la actitud</h2></div>
+      <ol class="reglas" id="reglas"></ol>
+      <h3>Reglas complementarias</h3>
+      <ul class="reglas mods" id="mods"></ul>
+      <p class="fuente" id="regla-porque"></p>
+    </div>
+  </section>
+</main>
+
+<!-- ============ Entrenamiento con datos propios ============ -->
+<dialog id="dlg-entrenar">
+  <div class="dlg-cabecera">
+    <h2>Entrenar con mis datos</h2>
+    <button class="boton suave" id="dlg-cerrar">Cerrar</button>
+  </div>
+  <p class="apagado">Enseñale a Ottoman cómo se ven y suenan <em>tus</em> emociones. Solo se guardan números (medidas de la cara y de la voz) en esta computadora; nunca fotos ni audios.</p>
+  <div class="pestanas">
+    <button class="pestana activa" data-mod="cara">Mi cara</button>
+    <button class="pestana" data-mod="voz">Mi voz</button>
+  </div>
+  <div class="dlg-cuerpo">
+    <div>
+      <p id="ent-ayuda"></p>
+      <div class="selector" id="ent-emociones"></div>
+      <button class="boton primario" id="ent-capturar">Capturar</button>
+      <span class="apagado" id="ent-progreso"></span>
+      <table class="tabla" id="ent-tabla"></table>
+      <div class="fila">
+        <button class="boton" id="ent-entrenar">Entrenar modelo</button>
+        <button class="boton suave" id="ent-borrar">Borrar estos datos</button>
+      </div>
+    </div>
+    <div id="ent-resultado" class="resultado"><p class="apagado">Cuando entrenes, acá aparece qué tan bien reconoce tus emociones el modelo.</p></div>
+  </div>
+</dialog>
+
+<script src="/web/ojos.js"></script>
+<script src="/web/app.js"></script>
+</body>
+</html>
